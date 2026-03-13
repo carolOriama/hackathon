@@ -4,6 +4,9 @@ import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import NotFound from "@/pages/not-found";
 
+// Landing
+import Landing from "@/pages/landing";
+
 // Student pages
 import Login from "@/pages/login";
 import Dashboard from "@/pages/dashboard";
@@ -39,8 +42,8 @@ const queryClient = new QueryClient({
 function Router() {
   return (
     <Switch>
-      {/* Auth */}
-      <Route path="/" component={Login} />
+      {/* Landing & Auth */}
+      <Route path="/" component={Landing} />
       <Route path="/login" component={Login} />
 
       {/* Student */}
