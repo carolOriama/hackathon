@@ -6,12 +6,14 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
+import { useAuth } from "@/hooks/use-auth";
 import { instructorUser, instructorCourses, studentEnrollments, ticketPerformance } from "@/lib/instructor-data";
 
 const containerVariants = { hidden: { opacity: 0 }, show: { opacity: 1, transition: { staggerChildren: 0.08 } } };
 const itemVariants = { hidden: { opacity: 0, y: 14 }, show: { opacity: 1, y: 0, transition: { type: "spring" as const, stiffness: 280, damping: 24 } } };
 
 export default function InstructorDashboard() {
+  const { user: authUser } = useAuth();
   const liveCourse = instructorCourses.find(c => c.status === "Live");
   const atRiskStudents = studentEnrollments.filter(s => s.status === "At Risk");
   const weakestTicket = [...ticketPerformance].sort((a, b) => a.passRate - b.passRate)[0];
@@ -29,7 +31,7 @@ export default function InstructorDashboard() {
 
         <motion.div initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }} className="flex flex-col md:flex-row md:items-end justify-between gap-4">
           <div>
-            <h1 className="text-3xl font-display font-bold text-slate-900 tracking-tight">Welcome back, {instructorUser.name.split(" ")[0]}</h1>
+            <h1 className="text-3xl font-display font-bold text-slate-900 tracking-tight">Welcome back, {authUser?.user_metadata?.full_name?.split(" ")[0] || instructorUser.name.split(" ")[0]}</h1>
             <p className="text-slate-500 mt-1">{instructorUser.title} · {instructorUser.institution}</p>
           </div>
           <div className="text-sm font-medium text-slate-500 bg-white px-4 py-2 rounded-full border border-slate-200 shadow-sm inline-flex items-center">

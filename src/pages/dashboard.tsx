@@ -3,6 +3,7 @@ import { motion } from "framer-motion";
 import { Flame, BookOpen, CheckCircle2, Wallet, AlertCircle, Clock, ArrowRight, Play } from "lucide-react";
 import { MainLayout } from "@/components/layout/main-layout";
 import { useUser, useEnrolledCourses } from "@/hooks/use-app-data";
+import { useAuth } from "@/hooks/use-auth";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
 import { Badge } from "@/components/ui/badge";
@@ -10,6 +11,7 @@ import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 
 export default function Dashboard() {
+  const { user: authUser } = useAuth();
   const { data: user, isLoading: userLoading } = useUser();
   const { data: courses, isLoading: coursesLoading } = useEnrolledCourses();
 
@@ -56,7 +58,7 @@ export default function Dashboard() {
         >
           <div>
             <h1 className="text-4xl font-display font-bold text-foreground tracking-tight">
-              Hello, {user?.name.split(' ')[0]}.
+              Hello, {authUser?.user_metadata?.full_name?.split(' ')[0] || user?.name.split(' ')[0]}.
             </h1>
           </div>
           <div className="text-sm font-bold text-foreground bg-secondary px-4 py-2 rounded-sm border-2 border-border inline-flex items-center shadow-[4px_4px_0px_0px_rgba(0,0,0,0.5)]">

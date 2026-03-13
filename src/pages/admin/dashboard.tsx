@@ -4,6 +4,7 @@ import { AdminLayout } from "@/components/layout/admin-layout";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
+import { useAuth } from "@/hooks/use-auth";
 import { platformStats, recentActivity, partnerCourses } from "@/lib/admin-data";
 
 const statCards = [
@@ -23,6 +24,7 @@ const itemVariants: any = {
 };
 
 export default function AdminDashboard() {
+  const { user: authUser } = useAuth();
   const pendingCourses = partnerCourses.filter(c => c.status === "Under Review" || c.status === "Draft");
 
   return (
@@ -32,7 +34,7 @@ export default function AdminDashboard() {
         <motion.div initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }} className="flex flex-col md:flex-row md:items-end justify-between gap-4">
           <div>
             <h1 className="text-3xl font-display font-bold text-slate-900 tracking-tight">Platform Overview</h1>
-            <p className="text-slate-500 mt-1">Welcome back, Dorcas. Here's what's happening on Fieldwork.</p>
+            <p className="text-slate-500 mt-1">Welcome back, {authUser?.user_metadata?.full_name?.split(" ")[0] || "Dorcas"}. Here's what's happening on Fieldwork.</p>
           </div>
           <div className="text-sm font-medium text-slate-500 bg-white px-4 py-2 rounded-full border border-slate-200 shadow-sm inline-flex items-center">
             {new Date().toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" })}
