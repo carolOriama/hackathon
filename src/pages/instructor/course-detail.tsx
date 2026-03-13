@@ -411,14 +411,25 @@ export default function InstructorCourseDetail() {
           </>
         ) : (
           <>
-            <div className="flex items-center justify-between gap-4">
-              <Link
-                href="/instructor/courses"
-                className="inline-flex items-center text-xs font-medium text-slate-500 hover:text-primary transition-colors"
-              >
-                <ArrowLeft className="w-3 h-3 mr-1" />
-                Back to courses
-              </Link>
+            <div className="flex items-center justify-between gap-4 flex-wrap">
+              <div className="flex items-center gap-3">
+                <Link
+                  href="/instructor/courses"
+                  className="inline-flex items-center text-xs font-medium text-slate-500 hover:text-primary transition-colors"
+                >
+                  <ArrowLeft className="w-3 h-3 mr-1" />
+                  Back to courses
+                </Link>
+                {courseId && (
+                  <Link
+                    href={`/instructor/courses/${courseId}/attempts`}
+                    className="inline-flex items-center text-xs font-medium text-primary hover:underline"
+                  >
+                    <Eye className="w-3 h-3 mr-1" />
+                    View attempts
+                  </Link>
+                )}
+              </div>
               <Badge variant="outline" className="text-xs text-slate-500">
                 Instructor view
               </Badge>

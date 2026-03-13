@@ -155,12 +155,17 @@ interface GradeAttemptResponse {
 export async function gradeAttemptApi(
   ticketId: string,
   attemptId: string,
+  accessToken?: string | null,
 ): Promise<GradeAttemptResponse> {
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+  };
+  if (accessToken) {
+    headers.Authorization = `Bearer ${accessToken}`;
+  }
   const res = await fetch(`${API_BASE_URL}/api/tickets/grade`, {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
+    headers,
     body: JSON.stringify({ ticketId, attemptId }),
   });
 
@@ -208,6 +213,7 @@ export function useGenerateSprintTickets(
 export function useGradeAttempt(
   ticketId: string,
   attemptId: string,
+  options?: { getAccessToken?: () => string | null | undefined },
 ) {
   return useMutation({
     mutationKey: [
@@ -215,7 +221,32 @@ export function useGradeAttempt(
       ticketId,
       attemptId,
     ],
-    mutationFn: () => gradeAttemptApi(ticketId, attemptId),
+    mutationFn: () =>
+      gradeAttemptApi(
+        ticketId,
+        attemptId,
+        options?.getAccessToken?.() ?? undefined,
+      ),
   });
+}
+
+export async function overrideAttemptStatusApi(
+  attemptId: string,
+  status: "passed" | "failed",
+  accessToken: string,
+): Promise<{ data?: { attemptId: string; status: string }; error?: { message: string } }> {
+  const res = await fetch(`${API_BASE_URL}/api/tickets/attempts/${attemptId}`, {
+    method: "PATCH",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${accessToken}`,
+    },
+    body: JSON.stringify({ status }),
+  });
+  const json = await parseJsonOrThrow<{ data?: { attemptId: string; status: string }; error?: { message: string } }>(res);
+  if (!res.ok && json.error) {
+    throw new Error(json.error.message);
+  }
+  return json;
 }
 

@@ -720,6 +720,140 @@ export interface TicketDetailData {
   deliverables: string[];
 }
 
+/** Instructor: list attempts for a course (for review / Grade with AI). */
+export interface InstructorAttemptListItem {
+  id: string;
+  ticket_id: string;
+  ticket_title: string;
+  student_id: string;
+  student_name: string;
+  status: AttemptStatus;
+  submitted_at: string | null;
+  ai_score: number | null;
+  created_at: string;
+}
+
+export function useInstructorCourseAttempts(courseId: string | null) {
+  return useQuery({
+    queryKey: ["instructor", "course-attempts", courseId],
+    enabled: !!courseId && !!supabase,
+    queryFn: async (): Promise<InstructorAttemptListItem[]> => {
+      if (!supabase || !courseId) return [];
+
+      const { data: ticketRows, error: ticketsError } = await supabase
+        .from("tickets")
+        .select("id")
+        .eq("course_id", courseId);
+
+      if (ticketsError || !ticketRows?.length) return [];
+
+      const ticketIds = ticketRows.map((t: { id: string }) => t.id);
+
+      const { data: attemptRows, error: attemptsError } = await supabase
+        .from("ticket_attempts")
+        .select(
+          `
+          id,
+          ticket_id,
+          student_id,
+          status,
+          submitted_at,
+          ai_score,
+          created_at,
+          tickets(title),
+          profiles(full_name)
+        `
+        )
+        .in("ticket_id", ticketIds)
+        .order("submitted_at", { ascending: false, nullsFirst: false })
+        .order("created_at", { ascending: false });
+
+      if (attemptsError) {
+        console.error("[useInstructorCourseAttempts]", attemptsError);
+        return [];
+      }
+
+      const list = (attemptRows ?? []).map((row: Record<string, unknown>) => {
+        const tickets = row.tickets as { title: string } | null;
+        const profiles = row.profiles as { full_name: string } | null;
+        return {
+          id: row.id as string,
+          ticket_id: row.ticket_id as string,
+          ticket_title: tickets?.title ?? "—",
+          student_id: row.student_id as string,
+          student_name: profiles?.full_name ?? "Student",
+          status: row.status as AttemptStatus,
+          submitted_at: row.submitted_at as string | null,
+          ai_score: row.ai_score as number | null,
+          created_at: row.created_at as string,
+        };
+      });
+
+      return list;
+    },
+  });
+}
+
+/** Instructor: full detail for one attempt (for review sheet). */
+export interface InstructorAttemptDetail {
+  attempt: TicketAttemptRow;
+  deliverableSubmissions: (DeliverableSubmissionRow & { deliverable_description?: string })[];
+}
+
+export function useInstructorAttemptDetail(attemptId: string | null) {
+  return useQuery({
+    queryKey: ["instructor", "attempt-detail", attemptId],
+    enabled: !!attemptId && !!supabase,
+    queryFn: async (): Promise<InstructorAttemptDetail | null> => {
+      if (!supabase || !attemptId) return null;
+
+      const { data: attempt, error: attemptError } = await supabase
+        .from("ticket_attempts")
+        .select("*")
+        .eq("id", attemptId)
+        .single();
+
+      if (attemptError || !attempt) return null;
+
+      const { data: subs, error: subsError } = await supabase
+        .from("deliverable_submissions")
+        .select("*")
+        .eq("attempt_id", attemptId)
+        .order("created_at", { ascending: true });
+
+      if (subsError) return { attempt: attempt as TicketAttemptRow, deliverableSubmissions: [] };
+
+      const deliverableIds = (subs ?? []).map((s: { deliverable_id: string }) => s.deliverable_id);
+      let descriptions: Record<string, string> = {};
+      if (deliverableIds.length > 0) {
+        const { data: delivRows } = await supabase
+          .from("ticket_deliverables")
+          .select("id, description")
+          .in("id", deliverableIds);
+        descriptions = ((delivRows ?? []) as { id: string; description: string }[]).reduce(
+          (acc, d) => {
+            acc[d.id] = d.description;
+            return acc;
+          },
+          {} as Record<string, string>
+        );
+      }
+
+      const deliverableSubmissions = (subs ?? []).map(
+        (s: DeliverableSubmissionRow & { deliverable_id: string }) => ({
+          ...s,
+          deliverable_description: descriptions[s.deliverable_id] ?? "",
+        })
+      );
+
+      return {
+        attempt: attempt as TicketAttemptRow,
+        deliverableSubmissions,
+      };
+    },
+  });
+}
+
 /** Fetch a single ticket's scenario and deliverables (for instructor Supabase path). */
 export function useInstructorTicketDetail(
   courseId: string | null,
@@ -1005,18 +1139,254 @@ export function useTicket(
   });
 }
 
+// ---------------------------------------------------------------------------
+// Ticket attempt: get-or-create in_progress attempt + deliverable submissions
+// ---------------------------------------------------------------------------
+export type AttemptStatus = "in_progress" | "submitted" | "passed" | "failed";
+
+export interface TicketAttemptRow {
+  id: string;
+  student_id: string;
+  ticket_id: string;
+  enrollment_id: string;
+  status: AttemptStatus;
+  submission_text: string | null;
+  submission_code: string | null;
+  submission_files: unknown;
+  ai_score: number | null;
+  ai_review_text: string | null;
+  time_spent_minutes: number | null;
+  submitted_at: string | null;
+  reviewed_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface DeliverableSubmissionRow {
+  id: string;
+  attempt_id: string;
+  deliverable_id: string;
+  content: string;
+  ai_score: number | null;
+  ai_feedback: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface TicketAttemptData {
+  attempt: TicketAttemptRow | null;
+  deliverableSubmissions: DeliverableSubmissionRow[];
+  noEnrollment: boolean;
+}
+
+export function useTicketAttempt(
+  courseId: string,
+  ticketId: string,
+  options?: { enabled?: boolean }
+) {
+  const { user: authUser } = useAuth();
+
+  return useQuery({
+    queryKey: ["ticket-attempt", courseId, ticketId, authUser?.id ?? "anonymous"],
+    enabled:
+      options?.enabled !== false && !!ticketId && !!courseId && !!authUser?.id && !!supabase,
+    queryFn: async (): Promise<TicketAttemptData> => {
+      if (!supabase || !authUser?.id || !ticketId || !courseId) {
+        return { attempt: null, deliverableSubmissions: [], noEnrollment: true };
+      }
+
+      // 1. Get enrollment for this student + course
+      const { data: enrollment, error: enrollError } = await supabase
+        .from("enrollments")
+        .select("id")
+        .eq("course_id", courseId)
+        .eq("student_id", authUser.id)
+        .eq("status", "active")
+        .maybeSingle();
+
+      if (enrollError || !enrollment) {
+        return { attempt: null, deliverableSubmissions: [], noEnrollment: true };
+      }
+
+      const enrollmentId = enrollment.id;
+
+      // 2. Look for existing in_progress attempt
+      const { data: existingAttempt, error: attemptFindError } = await supabase
+        .from("ticket_attempts")
+        .select("*")
+        .eq("enrollment_id", enrollmentId)
+        .eq("ticket_id", ticketId)
+        .eq("status", "in_progress")
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      if (attemptFindError) {
+        console.error("[useTicketAttempt] Failed to find attempt", attemptFindError);
+        return { attempt: null, deliverableSubmissions: [], noEnrollment: false };
+      }
+
+      if (existingAttempt) {
+        const { data: subs } = await supabase
+          .from("deliverable_submissions")
+          .select("*")
+          .eq("attempt_id", existingAttempt.id)
+          .order("created_at", { ascending: true });
+        return {
+          attempt: existingAttempt as TicketAttemptRow,
+          deliverableSubmissions: (subs ?? []) as DeliverableSubmissionRow[],
+          noEnrollment: false,
+        };
+      }
+
+      // 3. Load any existing attempt (e.g. submitted/passed/failed) for this enrollment+ticket to return for display
+      const { data: anyAttempt } = await supabase
+        .from("ticket_attempts")
+        .select("*")
+        .eq("enrollment_id", enrollmentId)
+        .eq("ticket_id", ticketId)
+        .order("submitted_at", { ascending: false, nullsFirst: false })
+        .limit(1)
+        .maybeSingle();
+
+      if (anyAttempt) {
+        const { data: subs } = await supabase
+          .from("deliverable_submissions")
+          .select("*")
+          .eq("attempt_id", anyAttempt.id)
+          .order("created_at", { ascending: true });
+        return {
+          attempt: anyAttempt as TicketAttemptRow,
+          deliverableSubmissions: (subs ?? []) as DeliverableSubmissionRow[],
+          noEnrollment: false,
+        };
+      }
+
+      // 4. Create new attempt: get ticket_deliverables for this ticket
+      const { data: deliverables, error: delivError } = await supabase
+        .from("ticket_deliverables")
+        .select("id")
+        .eq("ticket_id", ticketId)
+        .order("order_index", { ascending: true });
+
+      if (delivError || !deliverables?.length) {
+        console.error("[useTicketAttempt] No deliverables for ticket", delivError);
+        return { attempt: null, deliverableSubmissions: [], noEnrollment: false };
+      }
+
+      const { data: newAttempt, error: insertAttemptError } = await supabase
+        .from("ticket_attempts")
+        .insert({
+          student_id: authUser.id,
+          ticket_id: ticketId,
+          enrollment_id: enrollmentId,
+          status: "in_progress",
+        })
+        .select("*")
+        .single();
+
+      if (insertAttemptError || !newAttempt) {
+        console.error("[useTicketAttempt] Failed to create attempt", insertAttemptError);
+        return { attempt: null, deliverableSubmissions: [], noEnrollment: false };
+      }
+
+      const attemptId = (newAttempt as { id: string }).id;
+      const subsPayload = deliverables.map((d: { id: string }) => ({
+        attempt_id: attemptId,
+        deliverable_id: d.id,
+        content: "",
+      }));
+
+      const { error: insertSubsError } = await supabase
+        .from("deliverable_submissions")
+        .insert(subsPayload);
+
+      if (insertSubsError) {
+        console.error("[useTicketAttempt] Failed to create deliverable submissions", insertSubsError);
+        return {
+          attempt: newAttempt as TicketAttemptRow,
+          deliverableSubmissions: [],
+          noEnrollment: false,
+        };
+      }
+
+      const { data: subs } = await supabase
+        .from("deliverable_submissions")
+        .select("*")
+        .eq("attempt_id", attemptId)
+        .order("created_at", { ascending: true });
+
+      return {
+        attempt: newAttempt as TicketAttemptRow,
+        deliverableSubmissions: (subs ?? []) as DeliverableSubmissionRow[],
+        noEnrollment: false,
+      };
+    },
+  });
+}
+
 export function useSubmitTicket() {
   const queryClient = useQueryClient();
-  
+
   return useMutation({
-    mutationFn: async ({ courseId, ticketId, content }: { courseId: string, ticketId: string, content: string }) => {
-      await delay(1200); // Simulate upload/processing
-      return { success: true, xpEarned: 150 };
+    mutationFn: async (params: {
+      courseId: string;
+      ticketId: string;
+      attemptId: string;
+      content: string;
+      timeSpentMinutes?: number;
+    }) => {
+      if (!supabase) throw new Error("Not connected");
+      const { attemptId, content, timeSpentMinutes } = params;
+
+      const now = new Date().toISOString();
+
+      // Get deliverable_submissions for this attempt (ordered) to update first one
+      const { data: submissions, error: fetchSubsError } = await supabase
+        .from("deliverable_submissions")
+        .select("id, deliverable_id")
+        .eq("attempt_id", attemptId)
+        .order("created_at", { ascending: true });
+
+      if (fetchSubsError || !submissions?.length) {
+        throw new Error("Could not load submissions for this attempt.");
+      }
+
+      const firstId = submissions[0].id;
+      const { error: updateSubError } = await supabase
+        .from("deliverable_submissions")
+        .update({ content: content || "" })
+        .eq("id", firstId);
+
+      if (updateSubError) throw new Error("Failed to save your work.");
+
+      const updatePayload: {
+        status: "submitted";
+        submitted_at: string;
+        submission_text?: string;
+        time_spent_minutes?: number;
+      } = {
+        status: "submitted",
+        submitted_at: now,
+        submission_text: content,
+      };
+      if (timeSpentMinutes != null) updatePayload.time_spent_minutes = timeSpentMinutes;
+
+      const { error: updateAttemptError } = await supabase
+        .from("ticket_attempts")
+        .update(updatePayload)
+        .eq("id", attemptId);
+
+      if (updateAttemptError) throw new Error("Failed to submit attempt.");
+
+      return { success: true, attemptId };
     },
     onSuccess: (_, variables) => {
-      // In a real app we'd invalidate queries here
-      queryClient.invalidateQueries({ queryKey: ['courses'] });
-      queryClient.invalidateQueries({ queryKey: ['user'] });
-    }
+      queryClient.invalidateQueries({ queryKey: ["courses"] });
+      queryClient.invalidateQueries({ queryKey: ["user"] });
+      queryClient.invalidateQueries({
+        queryKey: ["ticket-attempt", variables.courseId, variables.ticketId],
+      });
+    },
   });
 }

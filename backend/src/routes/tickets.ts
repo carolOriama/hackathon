@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { getSupabaseClient } from "../supabaseClient.js";
 import { HttpError } from "../errors.js";
+import { getAuthUserId } from "../auth.js";
 import {
   generateTicketsForCourseId,
   generateTicketsForSprintId,
@@ -159,6 +160,52 @@ ticketsRouter.post("/grade", async (req, res) => {
     }
 
     const supabase = getSupabaseClient();
+    const userId = await getAuthUserId(req);
+
+    if (userId) {
+      const { data: attempt, error: attemptErr } = await supabase
+        .from("ticket_attempts")
+        .select("student_id")
+        .eq("id", attemptId)
+        .single();
+
+      if (attemptErr || !attempt) {
+        return res.status(404).json({
+          error: { code: "NOT_FOUND", message: "Ticket attempt not found." },
+        });
+      }
+
+      const isStudent = attempt.student_id === userId;
+      if (!isStudent) {
+        const { data: ticket, error: ticketErr } = await supabase
+          .from("tickets")
+          .select("course_id")
+          .eq("id", ticketId)
+          .single();
+        if (ticketErr || !ticket) {
+          return res.status(403).json({
+            error: { code: "FORBIDDEN", message: "Not allowed to grade this attempt." },
+          });
+        }
+        const { data: course } = await supabase
+          .from("courses")
+          .select("instructor_id")
+          .eq("id", ticket.course_id)
+          .single();
+        const isInstructor = course?.instructor_id === userId;
+        const { data: profile } = await supabase
+          .from("profiles")
+          .select("role")
+          .eq("id", userId)
+          .single();
+        const isAdmin = profile?.role === "admin";
+        if (!isInstructor && !isAdmin) {
+          return res.status(403).json({
+            error: { code: "FORBIDDEN", message: "Not allowed to grade this attempt." },
+          });
+        }
+      }
+    }
 
     const result = await gradeAttemptForTicket(supabase, {
       ticketId,
@@ -183,6 +230,107 @@ ticketsRouter.post("/grade", async (req, res) => {
       error: {
         code: "INTERNAL_ERROR",
         message: "Unexpected error grading attempt.",
+      },
+    });
+  }
+});
+
+/** Manual override: set attempt status to passed or failed (instructor/admin only). */
+ticketsRouter.patch("/attempts/:attemptId", async (req, res) => {
+  try {
+    const attemptId = req.params?.attemptId as string | undefined;
+    const status = req.body?.status as string | undefined;
+
+    if (!attemptId || !status || (status !== "passed" && status !== "failed")) {
+      return res.status(400).json({
+        error: {
+          code: "BAD_REQUEST",
+          message: "attemptId in path and status (passed|failed) in body are required.",
+        },
+      });
+    }
+
+    const userId = await getAuthUserId(req);
+    if (!userId) {
+      return res.status(401).json({
+        error: { code: "UNAUTHORIZED", message: "Authentication required." },
+      });
+    }
+
+    const supabase = getSupabaseClient();
+
+    const { data: attempt, error: attemptErr } = await supabase
+      .from("ticket_attempts")
+      .select("ticket_id")
+      .eq("id", attemptId)
+      .single();
+
+    if (attemptErr || !attempt) {
+      return res.status(404).json({
+        error: { code: "NOT_FOUND", message: "Ticket attempt not found." },
+      });
+    }
+
+    const { data: ticket, error: ticketErr } = await supabase
+      .from("tickets")
+      .select("course_id")
+      .eq("id", attempt.ticket_id)
+      .single();
+
+    if (ticketErr || !ticket) {
+      return res.status(404).json({
+        error: { code: "NOT_FOUND", message: "Ticket not found." },
+      });
+    }
+
+    const { data: course } = await supabase
+      .from("courses")
+      .select("instructor_id")
+      .eq("id", ticket.course_id)
+      .single();
+
+    const isInstructor = course?.instructor_id === userId;
+    const { data: profile } = await supabase
+      .from("profiles")
+      .select("role")
+      .eq("id", userId)
+      .single();
+    const isAdmin = profile?.role === "admin";
+
+    if (!isInstructor && !isAdmin) {
+      return res.status(403).json({
+        error: { code: "FORBIDDEN", message: "Only the course instructor or admin can override status." },
+      });
+    }
+
+    const now = new Date().toISOString();
+    const { error: updateErr } = await supabase
+      .from("ticket_attempts")
+      .update({
+        status,
+        reviewed_at: now,
+        updated_at: now,
+      })
+      .eq("id", attemptId);
+
+    if (updateErr) {
+      return res.status(500).json({
+        error: {
+          code: "DB_ERROR",
+          message: "Failed to update attempt status.",
+          details: updateErr.message,
+        },
+      });
+    }
+
+    return res.status(200).json({ data: { attemptId, status } });
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error("override attempt error", err);
+    return res.status(500).json({
+      error: {
+        code: "INTERNAL_ERROR",
+        message: "Unexpected error updating attempt.",
       },
     });
   }
