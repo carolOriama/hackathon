@@ -91,7 +91,7 @@ export function buildTicketGenerationSystemPrompt() {
 export function buildTicketGenerationUserPrompt(
   context: TicketGenerationContext,
 ): string {
-  const { course, materials, targetTicketCount } = context;
+  const { course, materials, targetTicketCount, maxTicketsPerRequest, alreadyGeneratedTitles } = context;
 
   const materialSummaries = materials
     .map((m: CourseMaterialContext, index: number) => {
@@ -105,7 +105,11 @@ export function buildTicketGenerationUserPrompt(
     })
     .join("\n\n");
 
-  const targetTickets = targetTicketCount ?? 6;
+  const maxPerRequest = maxTicketsPerRequest ?? 8;
+  const targetTickets = Math.min(
+    maxPerRequest,
+    targetTicketCount ?? maxPerRequest,
+  );
 
   return [
     "=== COURSE CONTEXT ===",
@@ -123,6 +127,14 @@ export function buildTicketGenerationUserPrompt(
     "Use only information that is clearly implied by this course context and materials.",
     "If some details are missing, fall back to industry-standard, vendor-neutral practices for this domain.",
     "Do NOT invent proprietary company names, internal tools, or specific client data.",
+    ...(alreadyGeneratedTitles?.length
+      ? [
+          "",
+          "=== ALREADY GENERATED (DO NOT DUPLICATE) ===",
+          "You must NOT create tickets with the same or nearly identical titles as these:",
+          alreadyGeneratedTitles.map((t) => `- ${t}`).join("\n"),
+        ]
+      : []),
     "",
     "=== COURSE MATERIALS (SUMMARIZED) ===",
     materialSummaries ||

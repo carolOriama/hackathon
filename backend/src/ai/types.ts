@@ -42,6 +42,10 @@ export interface TicketGenerationContext {
   course: CourseContext;
   materials: CourseMaterialContext[];
   targetTicketCount?: number;
+  /** Max tickets to request in a single LLM call (chunking to avoid truncation). */
+  maxTicketsPerRequest?: number;
+  /** When chunking, titles already generated so the model can avoid duplicates. */
+  alreadyGeneratedTitles?: string[];
 }
 
 export interface PerDeliverableGrading {

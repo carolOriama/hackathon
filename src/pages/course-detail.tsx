@@ -1,12 +1,14 @@
+import { useState } from "react";
 import { useRoute, Link } from "wouter";
 import { motion } from "framer-motion";
-import { CheckCircle2, Lock, PlayCircle, Clock, Check, FileText, ArrowLeft } from "lucide-react";
+import { CheckCircle2, Lock, PlayCircle, Clock, Check, FileText, ArrowLeft, Eye } from "lucide-react";
 import { MainLayout } from "@/components/layout/main-layout";
 import { useCourse } from "@/hooks/use-app-data";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { Skeleton } from "@/components/ui/skeleton";
+import { TicketDetailSheet } from "@/components/ticket-detail-sheet";
 import {
   Accordion,
   AccordionContent,
@@ -16,7 +18,19 @@ import {
 
 export default function CourseDetail() {
   const [, params] = useRoute("/courses/:id");
-  const { data: course, isLoading } = useCourse(params?.id || "");
+  const courseId = params?.id || "";
+  const { data: course, isLoading } = useCourse(courseId);
+  const [selectedTicketId, setSelectedTicketId] = useState<string | null>(null);
+  const [sheetOpen, setSheetOpen] = useState(false);
+
+  const openTicketDetail = (ticketId: string) => {
+    setSelectedTicketId(ticketId);
+    setSheetOpen(true);
+  };
+  const closeTicketDetail = () => {
+    setSheetOpen(false);
+    setSelectedTicketId(null);
+  };
 
   if (isLoading || !course) {
     return (
@@ -134,8 +148,8 @@ export default function CourseDetail() {
                             'bg-slate-50 border-slate-100 opacity-60'
                           }`}
                         >
-                          <div className="flex items-start gap-3 mb-3 sm:mb-0">
-                            <div className="mt-0.5">
+                          <div className="flex items-start gap-3 mb-3 sm:mb-0 flex-1 min-w-0">
+                            <div className="mt-0.5 flex-shrink-0">
                               {ticket.status === 'Completed' ? (
                                 <CheckCircle2 className="w-5 h-5 text-emerald-500" />
                               ) : ticket.status === 'Active' ? (
@@ -144,18 +158,25 @@ export default function CourseDetail() {
                                 <Lock className="w-5 h-5 text-slate-400" />
                               )}
                             </div>
-                            <div>
-                              <div className="flex items-center gap-2 mb-1">
-                                <span className={`font-bold ${ticket.status === 'Locked' ? 'text-slate-500' : 'text-slate-900'}`}>
+                            <div className="min-w-0 flex-1">
+                              <button
+                                type="button"
+                                onClick={() => openTicketDetail(ticket.id)}
+                                className="text-left w-full group flex items-center gap-2"
+                              >
+                                <span className={`font-bold truncate ${ticket.status === 'Locked' ? 'text-slate-500' : 'text-slate-900'} group-hover:text-primary transition-colors`}>
                                   {ticket.title}
                                 </span>
+                                <Eye className="w-4 h-4 flex-shrink-0 text-slate-400 group-hover:text-primary transition-colors" aria-hidden />
+                              </button>
+                              <div className="flex items-center gap-2 mb-1">
                                 {ticket.isUrgent && (
                                   <Badge className="bg-red-100 text-red-700 hover:bg-red-100 text-[10px] py-0 px-1.5 uppercase font-bold tracking-wider">
                                     Urgent
                                   </Badge>
                                 )}
                               </div>
-                              <div className="flex flex-wrap items-center gap-3 text-xs font-medium text-slate-500">
+                              <div className="flex flex-wrap items-center gap-3 text-xs font-medium text-slate-500 mt-1">
                                 <span className="flex items-center gap-1 bg-white px-2 py-0.5 rounded border border-slate-200">
                                   <FileText className="w-3 h-3" /> {ticket.type}
                                 </span>
@@ -166,7 +187,16 @@ export default function CourseDetail() {
                             </div>
                           </div>
                           
-                          <div className="sm:ml-4 flex-shrink-0">
+                          <div className="sm:ml-4 flex-shrink-0 flex items-center gap-2">
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="sm"
+                              className="text-slate-500 hover:text-slate-900 sm:hidden"
+                              onClick={() => openTicketDetail(ticket.id)}
+                            >
+                              <Eye className="w-4 h-4 mr-1" /> View
+                            </Button>
                             {ticket.status === 'Completed' ? (
                               <Badge variant="outline" className="bg-emerald-50 text-emerald-700 border-emerald-200 w-full justify-center">Completed</Badge>
                             ) : ticket.status === 'Active' ? (
@@ -188,6 +218,16 @@ export default function CourseDetail() {
         </div>
 
       </div>
+
+      <TicketDetailSheet
+        open={sheetOpen}
+        onOpenChange={closeTicketDetail}
+        courseId={courseId}
+        ticketId={selectedTicketId}
+        variant="student"
+        courseTitle={course.title}
+        startTicketHref={selectedTicketId ? `/courses/${course.id}/ticket/${selectedTicketId}` : null}
+      />
     </MainLayout>
   );
 }

@@ -1,14 +1,22 @@
 import { useMutation } from "@tanstack/react-query";
 
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL as
-  | string
-  | undefined;
+/** In dev, use "" so /api is same-origin and Vite proxy forwards to backend. */
+const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL as string | undefined)?.trim() ?? "";
 
-if (!API_BASE_URL) {
-  // eslint-disable-next-line no-console
-  console.warn(
-    "[ai-api] VITE_API_BASE_URL is not set. AI endpoints will not work until configured.",
-  );
+/** Parse JSON from response; if body is HTML (e.g. proxy error page), throw a clear error. */
+async function parseJsonOrThrow<T>(res: Response): Promise<T> {
+  const text = await res.text();
+  try {
+    return JSON.parse(text) as T;
+  } catch {
+    const hint =
+      res.status === 404
+        ? "Backend returned 404. Is the server running?"
+        : /^\s*</.test(text)
+          ? "Server returned HTML instead of JSON. Is the backend running on port 4000?"
+          : `Server returned ${res.status}. Response was not JSON.`;
+    throw new Error(`${hint} (API: ${API_BASE_URL || "same origin"})`);
+  }
 }
 
 interface GenerateTicketsResponse {
@@ -36,12 +44,6 @@ export async function generateTicketsForCourseApi(
     targetTicketCount?: number;
   },
 ): Promise<GenerateTicketsResponse> {
-  if (!API_BASE_URL) {
-    throw new Error(
-      "VITE_API_BASE_URL is not configured.",
-    );
-  }
-
   const params = new URLSearchParams();
   params.set("courseId", courseId);
   if (options?.mode) params.set("mode", options.mode);
@@ -62,10 +64,71 @@ export async function generateTicketsForCourseApi(
     },
   );
 
-  const json =
-    (await res.json()) as GenerateTicketsResponse;
+  const json = await parseJsonOrThrow<GenerateTicketsResponse>(res);
   if (!res.ok && json.error) {
     throw new Error(json.error.message);
+  }
+
+  return json;
+}
+
+interface GenerateSprintTicketsResponse {
+  data?: {
+    courseId: string;
+    sprintId: string;
+    mode: string;
+    totalTickets: number;
+  };
+  error?: {
+    code: string;
+    message: string;
+    details?: string;
+  };
+}
+
+export async function generateTicketsForSprintApi(
+  courseId: string,
+  sprintId: string,
+  options?: {
+    mode?: GenerateTicketsMode;
+    targetTicketCount?: number;
+    materialIds?: string[];
+  },
+): Promise<GenerateSprintTicketsResponse> {
+  const body: Record<string, unknown> = {
+    courseId,
+    sprintId,
+  };
+
+  if (options?.mode) {
+    body.mode = options.mode;
+  }
+
+  if (options?.targetTicketCount != null) {
+    body.targetTicketCount = options.targetTicketCount;
+  }
+
+  if (options?.materialIds && options.materialIds.length > 0) {
+    body.materialIds = options.materialIds;
+  }
+
+  const res = await fetch(
+    `${API_BASE_URL}/api/tickets/generate-for-sprint`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(body),
+    },
+  );
+
+  const json = await parseJsonOrThrow<GenerateSprintTicketsResponse>(res);
+  if (!res.ok && json.error) {
+    const msg = json.error.details
+      ? `${json.error.message}: ${json.error.details}`
+      : json.error.message;
+    throw new Error(msg);
   }
 
   return json;
@@ -93,12 +156,6 @@ export async function gradeAttemptApi(
   ticketId: string,
   attemptId: string,
 ): Promise<GradeAttemptResponse> {
-  if (!API_BASE_URL) {
-    throw new Error(
-      "VITE_API_BASE_URL is not configured.",
-    );
-  }
-
   const res = await fetch(`${API_BASE_URL}/api/tickets/grade`, {
     method: "POST",
     headers: {
@@ -107,8 +164,7 @@ export async function gradeAttemptApi(
     body: JSON.stringify({ ticketId, attemptId }),
   });
 
-  const json =
-    (await res.json()) as GradeAttemptResponse;
+  const json = await parseJsonOrThrow<GradeAttemptResponse>(res);
   if (!res.ok && json.error) {
     throw new Error(json.error.message);
   }
@@ -123,6 +179,29 @@ export function useGenerateTickets(courseId: string) {
       mode?: GenerateTicketsMode;
       targetTicketCount?: number;
     }) => generateTicketsForCourseApi(courseId, options),
+  });
+}
+
+export function useGenerateSprintTickets(
+  courseId: string,
+  sprintId: string,
+) {
+  return useMutation({
+    mutationKey: [
+      "ai-generate-sprint-tickets",
+      courseId,
+      sprintId,
+    ],
+    mutationFn: (options?: {
+      mode?: GenerateTicketsMode;
+      targetTicketCount?: number;
+      materialIds?: string[];
+    }) =>
+      generateTicketsForSprintApi(
+        courseId,
+        sprintId,
+        options,
+      ),
   });
 }
 

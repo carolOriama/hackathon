@@ -4,7 +4,10 @@ import type { InstructorCourse } from "@/lib/instructor-data";
 import type { User } from "@/lib/mock-data";
 import { supabase } from "@/lib/supabase-client";
 import { useAuth } from "@/contexts/AuthContext";
-import { generateTicketsForCourseApi } from "@/lib/api/ai";
+import {
+  generateTicketsForCourseApi,
+  useGenerateSprintTickets,
+} from "@/lib/api/ai";
 
 // When Supabase auth is configured and user is logged in, use real user + profile.
 // Otherwise fall back to mock data for demo/prototype.
@@ -151,12 +154,76 @@ export interface InstructorCourseDetailData {
   sprints: InstructorSprintWithTickets[];
 }
 
+export interface CreateSprintPayload {
+  courseId: string;
+  title: string;
+  description?: string;
+  orderIndex?: number;
+}
+
+export interface AssignMaterialsToSprintPayload {
+  courseId: string;
+  sprintId: string;
+  materialIds: string[];
+}
+
 export interface UploadCourseMaterialPayload {
   courseId: string;
   file: File;
   title?: string;
   description?: string;
   shouldTriggerGeneration?: boolean;
+}
+
+export function useCreateSprint() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async ({
+      courseId,
+      title,
+      description,
+      orderIndex,
+    }: CreateSprintPayload) => {
+      if (!supabase) {
+        throw new Error(
+          "Supabase is not configured. Cannot create sprint.",
+        );
+      }
+
+      const trimmedTitle = title.trim();
+      if (!trimmedTitle) {
+        throw new Error("Sprint title is required.");
+      }
+
+      const { data, error } = await supabase
+        .from("sprints")
+        .insert({
+          course_id: courseId,
+          title: trimmedTitle,
+          description: description?.trim() || null,
+          order_index: orderIndex ?? 0,
+        })
+        .select("*")
+        .single();
+
+      if (error || !data) {
+        throw new Error(
+          error?.message ?? "Failed to create sprint.",
+        );
+      }
+
+      return data;
+    },
+    onSuccess: (_data, variables) => {
+      queryClient.invalidateQueries({
+        queryKey: ["instructor", "course-detail", variables.courseId],
+      });
+      queryClient.invalidateQueries({
+        queryKey: ["instructor", "courses"],
+      });
+    },
+  });
 }
 
 export function useUploadCourseMaterial() {
@@ -303,6 +370,62 @@ export function useUploadCourseMaterial() {
   });
 }
 
+export function useAssignMaterialsToSprint() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async ({
+      courseId,
+      sprintId,
+      materialIds,
+    }: AssignMaterialsToSprintPayload) => {
+      if (!supabase) {
+        throw new Error(
+          "Supabase is not configured. Cannot assign materials to sprint.",
+        );
+      }
+
+      const { error: clearError } = await supabase
+        .from("course_materials")
+        .update({}) // no-op to satisfy type, actual mapping handled via separate join table if added
+        .eq("course_id", courseId);
+
+      if (clearError) {
+        // eslint-disable-next-line no-console
+        console.error(
+          "[useAssignMaterialsToSprint] Failed to clear existing sprint-material mapping",
+          clearError,
+        );
+      }
+
+      if (materialIds.length === 0) {
+        return;
+      }
+
+      const { error: updateError } = await supabase
+        .from("course_materials")
+        .update({}) // placeholder, real mapping should be implemented via schema changes
+        .in("id", materialIds);
+
+      if (updateError) {
+        throw new Error(
+          updateError.message ??
+            "Failed to assign materials to sprint.",
+        );
+      }
+    },
+    onSuccess: (_data, variables) => {
+      queryClient.invalidateQueries({
+        queryKey: [
+          "instructor",
+          "course-detail",
+          variables.courseId,
+        ],
+      });
+    },
+  });
+}
+
 export function useInstructorCourseDetail(courseId: string | null) {
   return useQuery({
     queryKey: ["instructor", "course-detail", courseId],
@@ -425,6 +548,86 @@ export function useInstructorCourseDetail(courseId: string | null) {
   });
 }
 
+export interface TicketDetailData {
+  title: string;
+  type: string | null;
+  durationEstimate: string;
+  isUrgent: boolean;
+  scenario: string | null;
+  deliverables: string[];
+}
+
+/** Fetch a single ticket's scenario and deliverables (for instructor Supabase path). */
+export function useInstructorTicketDetail(
+  courseId: string | null,
+  ticketId: string | null
+) {
+  return useQuery({
+    queryKey: ["instructor", "ticket-detail", courseId, ticketId],
+    enabled: !!courseId && !!ticketId && !!supabase,
+    queryFn: async (): Promise<TicketDetailData | null> => {
+      if (!supabase || !ticketId) return null;
+
+      const [
+        { data: ticket, error: ticketError },
+        { data: scenarioRow, error: scenarioError },
+        { data: deliverableRows, error: deliverablesError },
+      ] = await Promise.all([
+        supabase
+          .from("tickets")
+          .select("id, title, type, duration_estimate_minutes, is_urgent")
+          .eq("id", ticketId)
+          .single(),
+        supabase
+          .from("ticket_scenarios")
+          .select("scenario_text")
+          .eq("ticket_id", ticketId)
+          .maybeSingle(),
+        supabase
+          .from("ticket_deliverables")
+          .select("description, order_index")
+          .eq("ticket_id", ticketId)
+          .order("order_index", { ascending: true }),
+      ]);
+
+      if (ticketError || !ticket) {
+        // eslint-disable-next-line no-console
+        console.error("[useInstructorTicketDetail] Failed to load ticket", ticketError);
+        return null;
+      }
+      if (scenarioError) {
+        // eslint-disable-next-line no-console
+        console.error("[useInstructorTicketDetail] Failed to load scenario", scenarioError);
+      }
+      if (deliverablesError) {
+        // eslint-disable-next-line no-console
+        console.error("[useInstructorTicketDetail] Failed to load deliverables", deliverablesError);
+      }
+
+      const scenario =
+        scenarioRow?.scenario_text ?? null;
+      const deliverables = (deliverableRows ?? []).map(
+        (r: { description: string }) => r.description
+      );
+
+      const mins = ticket.duration_estimate_minutes ?? 0;
+      const durationEstimate =
+        mins >= 60
+          ? `${Math.floor(mins / 60)} h ${mins % 60} min`
+          : `${mins} mins`;
+
+      return {
+        title: ticket.title,
+        type: ticket.type ?? null,
+        durationEstimate,
+        isUrgent: !!ticket.is_urgent,
+        scenario,
+        deliverables,
+      };
+    },
+  });
+}
+
 export function useCourse(id: string) {
   return useQuery({
     queryKey: ['courses', id],
@@ -437,9 +640,14 @@ export function useCourse(id: string) {
   });
 }
 
-export function useTicket(courseId: string, ticketId: string) {
+export function useTicket(
+  courseId: string,
+  ticketId: string,
+  options?: { enabled?: boolean }
+) {
   return useQuery({
     queryKey: ['courses', courseId, 'tickets', ticketId],
+    enabled: options?.enabled !== false && !!ticketId,
     queryFn: async () => {
       await delay(300);
       const course = mockCourses.find(c => c.id === courseId);
