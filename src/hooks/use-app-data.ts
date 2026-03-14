@@ -44,7 +44,7 @@ export function useUser() {
         .from('ticket_attempts')
         .select('*', { count: 'exact', head: true })
         .eq('student_id', session.user.id)
-        .eq('status', 'passed');
+        .in('status', ['passed', 'submitted']);
 
       const { data: certificates } = await supabase
         .from('certificates')
@@ -175,7 +175,7 @@ export function useEnrolledCourses() {
         .from('ticket_attempts')
         .select('ticket_id, enrollment_id')
         .in('enrollment_id', enrollmentIds)
-        .eq('status', 'passed');
+        .in('status', ['passed', 'submitted']);
       const passedByEnrollment = new Map<string, Set<string>>();
       for (const a of attempts ?? []) {
         let set = passedByEnrollment.get(a.enrollment_id);
@@ -204,7 +204,11 @@ export function useEnrolledCourses() {
           const prevTicket = list[indexInSprint - 1];
           const prevCompleted = prevTicket ? passedTicketIds.has(prevTicket.id) : false;
           const isFirstInCourse = courseSprints[0]?.id === sprintId && indexInSprint === 0;
-          if (isFirstInCourse || prevCompleted) return "Active";
+          const sprintIndex = courseSprints.findIndex(s => s.id === sprintId);
+          const prevSprint = sprintIndex > 0 ? courseSprints[sprintIndex - 1] : null;
+          const prevSprintTickets = prevSprint ? (ticketsBySprint.get(prevSprint.id) ?? []) : [];
+          const prevSprintFullyCompleted = indexInSprint === 0 && prevSprintTickets.length > 0 && prevSprintTickets.every(t => passedTicketIds.has(t.id));
+          if (isFirstInCourse || prevCompleted || prevSprintFullyCompleted) return "Active";
           return "Locked";
         };
 
@@ -290,7 +294,7 @@ export function useCourse(id: string) {
           .from('ticket_attempts')
           .select('ticket_id')
           .eq('enrollment_id', enrollment.id)
-          .eq('status', 'passed');
+          .in('status', ['passed', 'submitted']);
         if (attempts) passedTicketIds = new Set(attempts.map(a => a.ticket_id));
       }
 
@@ -311,7 +315,11 @@ export function useCourse(id: string) {
         const prevTicket = list[indexInSprint - 1];
         const prevCompleted = prevTicket ? passedTicketIds.has(prevTicket.id) : false;
         const isFirstInCourse = sprintId === sprints[0]?.id && indexInSprint === 0;
-        if (isFirstInCourse || prevCompleted) return "Active";
+        const sprintIndex = sprints.findIndex(s => s.id === sprintId);
+        const prevSprint = sprintIndex > 0 ? sprints[sprintIndex - 1] : null;
+        const prevSprintTickets = prevSprint ? (ticketsBySprint.get(prevSprint.id) ?? []) : [];
+        const prevSprintFullyCompleted = indexInSprint === 0 && prevSprintTickets.length > 0 && prevSprintTickets.every(t => passedTicketIds.has(t.id));
+        if (isFirstInCourse || prevCompleted || prevSprintFullyCompleted) return "Active";
         return "Locked";
       };
 
@@ -434,7 +442,7 @@ export function useSubmitTicket() {
 
       const isCoding = (ticket as { challenge_type?: string } | null)?.challenge_type === 'coding';
 
-      const { error: attemptError } = await supabase
+      const { data: inserted, error: attemptError } = await supabase
         .from('ticket_attempts')
         .insert({
           student_id: session.user.id,
@@ -444,11 +452,14 @@ export function useSubmitTicket() {
           submission_code: isCoding ? content : null,
           submission_text: !isCoding ? content : null,
           submitted_at: new Date().toISOString(),
-        });
+        })
+        .select('id')
+        .single();
 
       if (attemptError) throw new Error(attemptError.message);
+      if (!inserted?.id) throw new Error("Failed to create attempt");
 
-      return { success: true };
+      return { success: true, attemptId: inserted.id };
     },
     onSuccess: (_, variables) => {
       queryClient.invalidateQueries({ queryKey: ['courses'] });

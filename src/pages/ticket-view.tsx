@@ -1,10 +1,13 @@
 import { useState, useEffect } from "react";
 import { useRoute, Link, useLocation } from "wouter";
+import { useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft, Clock, AlertCircle, CheckCircle2, Trophy, ArrowRight, Loader2, Play, ChevronRight, ChevronLeft } from "lucide-react";
 import confetti from "canvas-confetti";
 import Editor from "@monaco-editor/react";
 
 import { useTicket, useCourse, useSubmitTicket } from "@/hooks/use-app-data";
+import { useAuth } from "@/hooks/use-auth";
+import { gradeAttemptApi } from "@/lib/api/ai";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -23,6 +26,8 @@ export default function TicketView() {
   const courseId = params?.courseId || "";
   const ticketId = params?.ticketId || "";
 
+  const queryClient = useQueryClient();
+  const { session } = useAuth();
   const { data: course, isLoading: courseLoading } = useCourse(courseId);
   const { data: ticket, isLoading: ticketLoading } = useTicket(courseId, ticketId);
   const submitMutation = useSubmitTicket();
@@ -31,6 +36,7 @@ export default function TicketView() {
   const [consoleOutput, setConsoleOutput] = useState("");
   const [isRunning, setIsRunning] = useState(false);
   const [showSuccess, setShowSuccess] = useState(false);
+  const [isGrading, setIsGrading] = useState(false);
 
   useEffect(() => {
     if (ticket?.starterCode) {
@@ -48,24 +54,57 @@ export default function TicketView() {
   };
 
   const handleSubmit = async () => {
-    await submitMutation.mutateAsync({ courseId, ticketId, content });
+    try {
+      setConsoleOutput("Submitting your work...");
+      const result = await submitMutation.mutateAsync({ courseId, ticketId, content });
+      const attemptId = result.attemptId;
 
-    // Trigger confetti
-    const duration = 3 * 1000;
-    const animationEnd = Date.now() + duration;
-    const defaults = { startVelocity: 30, spread: 360, ticks: 60, zIndex: 100 };
+      setConsoleOutput("AI is grading your submission...");
+      setIsGrading(true);
+      try {
+        const gradeResult = await gradeAttemptApi(
+          ticketId,
+          attemptId,
+          session?.access_token ?? undefined,
+        );
+        if (gradeResult.data) {
+          const { overallScore, overallFeedback } = gradeResult.data;
+          setConsoleOutput(
+            `--- Grading complete ---\n\nScore: ${overallScore}%\n\n${overallFeedback}`,
+          );
+        } else {
+          setConsoleOutput("Submission saved. Grading could not be completed.");
+        }
+        queryClient.invalidateQueries({ queryKey: ["courses"] });
+        queryClient.invalidateQueries({ queryKey: ["courses", courseId] });
+        queryClient.invalidateQueries({ queryKey: ["user"] });
+      } catch (gradeErr) {
+        setConsoleOutput(
+          `Submission saved. Grading failed: ${gradeErr instanceof Error ? gradeErr.message : "Unknown error"}`,
+        );
+        queryClient.invalidateQueries({ queryKey: ["courses"] });
+        queryClient.invalidateQueries({ queryKey: ["courses", courseId] });
+        queryClient.invalidateQueries({ queryKey: ["user"] });
+      } finally {
+        setIsGrading(false);
+      }
 
-    const randomInRange = (min: number, max: number) => Math.random() * (max - min) + min;
+      const duration = 3 * 1000;
+      const animationEnd = Date.now() + duration;
+      const defaults = { startVelocity: 30, spread: 360, ticks: 60, zIndex: 100 };
+      const randomInRange = (min: number, max: number) => Math.random() * (max - min) + min;
+      const interval: ReturnType<typeof setInterval> = setInterval(function () {
+        const timeLeft = animationEnd - Date.now();
+        if (timeLeft <= 0) return clearInterval(interval);
+        const particleCount = 50 * (timeLeft / duration);
+        confetti(Object.assign({}, defaults, { particleCount, origin: { x: randomInRange(0.1, 0.3), y: Math.random() - 0.2 } }));
+        confetti(Object.assign({}, defaults, { particleCount, origin: { x: randomInRange(0.7, 0.9), y: Math.random() - 0.2 } }));
+      }, 250);
 
-    const interval: any = setInterval(function () {
-      const timeLeft = animationEnd - Date.now();
-      if (timeLeft <= 0) return clearInterval(interval);
-      const particleCount = 50 * (timeLeft / duration);
-      confetti(Object.assign({}, defaults, { particleCount, origin: { x: randomInRange(0.1, 0.3), y: Math.random() - 0.2 } }));
-      confetti(Object.assign({}, defaults, { particleCount, origin: { x: randomInRange(0.7, 0.9), y: Math.random() - 0.2 } }));
-    }, 250);
-
-    setShowSuccess(true);
+      setShowSuccess(true);
+    } catch {
+      setConsoleOutput("Submission failed. Please try again.");
+    }
   };
 
   const handleNext = () => {
@@ -202,7 +241,7 @@ export default function TicketView() {
         <div className="lg:col-span-3 bg-[#11111b] flex flex-col h-full relative">
           <div className="h-10 border-b border-[#313244] flex items-center px-4 shrink-0 justify-between bg-[#11111b]">
             <span className="text-[11px] font-bold text-slate-500 tracking-widest uppercase">Output</span>
-            {isRunning && <Loader2 className="w-3.5 h-3.5 animate-spin text-slate-500" />}
+            {(isRunning || submitMutation.isPending || isGrading) && <Loader2 className="w-3.5 h-3.5 animate-spin text-slate-500" />}
           </div>
           <div className="flex-1 p-4 font-mono text-[13px] text-slate-300 leading-relaxed overflow-y-auto whitespace-pre-wrap">
             {consoleOutput}
@@ -239,13 +278,13 @@ export default function TicketView() {
           </Button>
           <Button
             onClick={handleSubmit}
-            disabled={submitMutation.isPending}
+            disabled={submitMutation.isPending || isGrading}
             variant="secondary"
             size="sm"
             className="h-8 bg-blue-600 hover:bg-blue-500 text-white border border-blue-500 hover:border-blue-400 rounded-md font-semibold text-xs px-3 ml-2"
           >
-            {submitMutation.isPending ? <Loader2 className="w-3 h-3 animate-spin mr-1" /> : undefined}
-            Submit Next <ChevronRight className="w-3 h-3 ml-1" />
+            {(submitMutation.isPending || isGrading) ? <Loader2 className="w-3 h-3 animate-spin mr-1" /> : undefined}
+            {isGrading ? "Grading…" : "Submit Next"} <ChevronRight className="w-3 h-3 ml-1" />
           </Button>
         </div>
       </footer>
