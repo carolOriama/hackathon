@@ -61,12 +61,14 @@ ticketsRouter.post("/generate", async (req, res) => {
       });
     }
 
+    const message = (err as Error)?.message ?? "Unexpected error generating tickets.";
     // eslint-disable-next-line no-console
-    console.error("generate tickets error", (err as Error)?.message ?? err);
-    return res.status(500).json({
+    console.error("generate tickets error", message);
+    const isRateLimit = typeof message === "string" && (message.includes("429") || /rate-limit|rate limit/i.test(message));
+    return res.status(isRateLimit ? 429 : 500).json({
       error: {
-        code: "INTERNAL_ERROR",
-        message: "Unexpected error generating tickets.",
+        code: isRateLimit ? "RATE_LIMITED" : "INTERNAL_ERROR",
+        message: isRateLimit ? "AI provider is temporarily rate-limited. Please try again in a moment." : "Unexpected error generating tickets.",
       },
     });
   }
@@ -135,10 +137,11 @@ ticketsRouter.post(["/generate-for-sprint", "/generate-for-sprint/"], async (req
     const message = (err as Error)?.message ?? "Unexpected error generating tickets for sprint.";
     // eslint-disable-next-line no-console
     console.error("generate tickets for sprint error", err);
-    return res.status(500).json({
+    const isRateLimit = typeof message === "string" && (message.includes("429") || /rate-limit|rate limit/i.test(message));
+    return res.status(isRateLimit ? 429 : 500).json({
       error: {
-        code: "INTERNAL_ERROR",
-        message,
+        code: isRateLimit ? "RATE_LIMITED" : "INTERNAL_ERROR",
+        message: isRateLimit ? "AI provider is temporarily rate-limited. Please try again in a moment." : message,
       },
     });
   }

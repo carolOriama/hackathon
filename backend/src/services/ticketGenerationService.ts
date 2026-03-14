@@ -6,7 +6,25 @@ import type {
   GeneratedTicket,
   TicketGenerationContext,
 } from "../ai/types.js";
-import { generateTicketsForCourse } from "../ai/llmClient.js";
+import { generateTicketsForCourse, OpenRouterError } from "../ai/llmClient.js";
+
+/** Wraps ticket generation and converts 429 rate-limit to HttpError for a clean API response. */
+async function generateTicketsWithRateLimitHandling(
+  context: TicketGenerationContext,
+): Promise<GeneratedTicket[]> {
+  try {
+    return await generateTicketsForCourse(context);
+  } catch (err) {
+    if (err instanceof OpenRouterError && err.status === 429) {
+      throw new HttpError(
+        429,
+        "RATE_LIMITED",
+        "AI provider is temporarily rate-limited. Please try again in a moment.",
+      );
+    }
+    throw err;
+  }
+}
 
 export interface GenerateTicketsParams {
   courseId: string;
@@ -114,7 +132,7 @@ export async function generateTicketsForCourseId(
   }
 
   const generatedTickets: GeneratedTicket[] =
-    await generateTicketsForCourse(generationContext);
+    await generateTicketsWithRateLimitHandling(generationContext);
 
   if (!generatedTickets.length) {
     throw new HttpError(
@@ -464,7 +482,7 @@ export async function generateTicketsForSprintId(
   };
 
   while (generatedTickets.length < targetCount) {
-    const batch = await generateTicketsForCourse(contextWithChunking);
+    const batch = await generateTicketsWithRateLimitHandling(contextWithChunking);
     if (batch.length === 0) break;
     generatedTickets.push(...batch);
     const requested = contextWithChunking.maxTicketsPerRequest ?? maxPerRequest;

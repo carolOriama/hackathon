@@ -39,6 +39,17 @@ function getEnv(name: string): string | undefined {
   return undefined;
 }
 
+/** Thrown when OpenRouter returns a non-2xx status (e.g. 429 rate limit). */
+export class OpenRouterError extends Error {
+  constructor(
+    message: string,
+    public readonly status: number,
+  ) {
+    super(message);
+    this.name = "OpenRouterError";
+  }
+}
+
 async function callOpenRouter<T>(
   body: OpenRouterChatRequest,
 ): Promise<T> {
@@ -68,8 +79,9 @@ async function callOpenRouter<T>(
   const text = await res.text();
 
   if (!res.ok) {
-    throw new Error(
+    throw new OpenRouterError(
       `OpenRouter request failed (${res.status}): ${text}`,
+      res.status,
     );
   }
 
@@ -205,6 +217,9 @@ export async function gradeSubmission(
   throw lastError ?? new Error("Grading failed after retries.");
 }
 
+const TICKET_GEN_RETRIES = 3;
+const TICKET_GEN_RETRY_DELAY_MS = 2000;
+
 export async function generateTicketsForCourse(
   context: TicketGenerationContext,
 ): Promise<GeneratedTicket[]> {
@@ -220,7 +235,7 @@ export async function generateTicketsForCourse(
     tickets: GeneratedTicket[];
   };
 
-  const result = await callOpenRouter<TicketArrayResponse>({
+  const body: OpenRouterChatRequest = {
     model,
     response_format: { type: "json_object" },
     max_tokens: 12_000,
@@ -229,8 +244,28 @@ export async function generateTicketsForCourse(
       { role: "system", content: systemPrompt },
       { role: "user", content: userPrompt },
     ],
-  });
+  };
 
-  return Array.isArray(result.tickets) ? result.tickets : [];
+  let lastError: Error | null = null;
+  for (let attempt = 0; attempt <= TICKET_GEN_RETRIES; attempt++) {
+    try {
+      const result = await callOpenRouter<TicketArrayResponse>(body);
+      return Array.isArray(result.tickets) ? result.tickets : [];
+    } catch (err) {
+      lastError = err instanceof Error ? err : new Error(String(err));
+      const isRateLimit =
+        err instanceof OpenRouterError && err.status === 429;
+      if (!isRateLimit || attempt >= TICKET_GEN_RETRIES) {
+        throw lastError;
+      }
+      const delayMs = TICKET_GEN_RETRY_DELAY_MS * Math.pow(2, attempt);
+      // eslint-disable-next-line no-console
+      console.warn(
+        `[generateTicketsForCourse] Rate limited (429), retrying in ${delayMs}ms (attempt ${attempt + 1}/${TICKET_GEN_RETRIES})`,
+      );
+      await new Promise((r) => setTimeout(r, delayMs));
+    }
+  }
+  throw lastError ?? new Error("Ticket generation failed after retries.");
 }
 

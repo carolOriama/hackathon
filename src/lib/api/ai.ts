@@ -1,4 +1,4 @@
-import { useMutation } from "@tanstack/react-query";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 
 /** In dev, use "" so /api is same-origin and Vite proxy forwards to backend. */
 const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL as string | undefined)?.trim() ?? "";
@@ -178,12 +178,19 @@ export async function gradeAttemptApi(
 }
 
 export function useGenerateTickets(courseId: string) {
+  const queryClient = useQueryClient();
   return useMutation({
     mutationKey: ["ai-generate-tickets", courseId],
     mutationFn: (options?: {
       mode?: GenerateTicketsMode;
       targetTicketCount?: number;
     }) => generateTicketsForCourseApi(courseId, options),
+    onSuccess: () => {
+      queryClient.invalidateQueries({
+        queryKey: ["instructor", "course-detail", courseId],
+      });
+      queryClient.invalidateQueries({ queryKey: ["instructor", "courses"] });
+    },
   });
 }
 
@@ -191,6 +198,7 @@ export function useGenerateSprintTickets(
   courseId: string,
   sprintId: string,
 ) {
+  const queryClient = useQueryClient();
   return useMutation({
     mutationKey: [
       "ai-generate-sprint-tickets",
@@ -207,6 +215,11 @@ export function useGenerateSprintTickets(
         sprintId,
         options,
       ),
+    onSuccess: () => {
+      queryClient.invalidateQueries({
+        queryKey: ["instructor", "course-detail", courseId],
+      });
+    },
   });
 }
 
