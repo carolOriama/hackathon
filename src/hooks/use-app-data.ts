@@ -1,11 +1,30 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { mockCourses, Ticket } from "@/lib/mock-data";
+import type { Course as DomainCourse, Sprint as DomainSprint, Ticket as DomainTicket } from "@/lib/domain-types";
 import { supabase } from "@/lib/supabase";
 
-// Since this is a static prototype without a real backend, we use TanStack Query 
-// with static data and artificial delays to simulate a real API experience.
-
 const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+
+/** Row from courses with joined instructor profile. Supabase may return profiles as object or array. */
+type CourseRowWithInstructor = {
+  id: string;
+  title: string;
+  category: string;
+  difficulty: string;
+  fee_amount: number;
+  total_sprints: number;
+  total_tickets: number;
+  status?: string;
+  profiles: { full_name: string | null } | { full_name: string | null }[] | null;
+};
+
+function getInstructorName(row: CourseRowWithInstructor): string {
+  const p = row.profiles;
+  if (!p) return 'Instructor';
+  const name = Array.isArray(p) ? p[0]?.full_name : p.full_name;
+  return name ?? 'Instructor';
+}
+
 
 export function useUser() {
   return useQuery({
@@ -66,10 +85,54 @@ export function useUser() {
 export function useCourses() {
   return useQuery({
     queryKey: ['courses'],
-    queryFn: async () => {
-      await delay(500);
-      return mockCourses;
-    }
+    queryFn: async (): Promise<DomainCourse[]> => {
+      const { data: { session } } = await supabase.auth.getSession();
+
+      const { data: courseRows, error: coursesError } = await supabase
+        .from('courses')
+        .select('id, title, category, difficulty, fee_amount, total_sprints, total_tickets, status, profiles!instructor_id(full_name)');
+
+      const courses = coursesError ? [] : ((courseRows ?? []) as unknown as CourseRowWithInstructor[]);
+
+      let enrolledCourseIds: Set<string> = new Set();
+      if (session?.user?.id) {
+        const { data: enrollments } = await supabase
+          .from('enrollments')
+          .select('course_id')
+          .eq('student_id', session.user.id);
+        if (enrollments) enrolledCourseIds = new Set(enrollments.map(e => e.course_id));
+      }
+
+      const fromDb: DomainCourse[] = courses.map(c => ({
+        id: c.id,
+        title: c.title,
+        instructor: getInstructorName(c),
+        category: c.category as DomainCourse['category'],
+        difficulty: c.difficulty as DomainCourse['difficulty'],
+        totalSprints: c.total_sprints,
+        totalTickets: c.total_tickets,
+        fee: Number(c.fee_amount),
+        progressPercent: 0,
+        sprints: [],
+        isEnrolled: enrolledCourseIds.has(c.id),
+      }));
+
+      const mockAsDomain: DomainCourse[] = mockCourses.map(c => ({
+        id: c.id,
+        title: c.title,
+        instructor: c.instructor,
+        category: c.category,
+        difficulty: c.difficulty,
+        totalSprints: c.totalSprints,
+        totalTickets: c.totalTickets,
+        fee: c.fee,
+        progressPercent: c.progressPercent ?? 0,
+        sprints: [],
+        isEnrolled: c.isEnrolled,
+      }));
+
+      return [...fromDb, ...mockAsDomain];
+    },
   });
 }
 
@@ -86,13 +149,116 @@ export function useEnrolledCourses() {
 export function useCourse(id: string) {
   return useQuery({
     queryKey: ['courses', id],
-    queryFn: async () => {
-      await delay(400);
-      const course = mockCourses.find(c => c.id === id);
-      if (!course) throw new Error("Course not found");
-      return course;
-    }
+    enabled: !!id,
+    queryFn: async (): Promise<DomainCourse> => {
+      const { data: { session } } = await supabase.auth.getSession();
+
+      const { data: courseRow, error: courseError } = await supabase
+        .from('courses')
+        .select('id, title, category, difficulty, fee_amount, total_sprints, total_tickets, profiles!instructor_id(full_name)')
+        .eq('id', id)
+        .single();
+
+      if (courseError || !courseRow) throw new Error("Course not found");
+      const c = courseRow as unknown as CourseRowWithInstructor;
+
+      let enrollment: { id: string; progress_percent: number } | null = null;
+      if (session?.user?.id) {
+        const { data: enr } = await supabase
+          .from('enrollments')
+          .select('id, progress_percent')
+          .eq('course_id', id)
+          .eq('student_id', session.user.id)
+          .maybeSingle();
+        enrollment = enr ?? null;
+      }
+
+      const { data: sprintRows, error: sprintsError } = await supabase
+        .from('sprints')
+        .select('id, title, order_index')
+        .eq('course_id', id)
+        .order('order_index', { ascending: true });
+
+      if (sprintsError) throw new Error(sprintsError.message);
+      const sprints = sprintRows ?? [];
+
+      const { data: ticketRows, error: ticketsError } = await supabase
+        .from('tickets')
+        .select('id, sprint_id, title, type, duration_estimate_minutes, is_urgent, order_index')
+        .eq('course_id', id)
+        .order('order_index', { ascending: true });
+
+      if (ticketsError) throw new Error(ticketsError.message);
+      const tickets = ticketRows ?? [];
+
+      let passedTicketIds: Set<string> = new Set();
+      if (enrollment) {
+        const { data: attempts } = await supabase
+          .from('ticket_attempts')
+          .select('ticket_id')
+          .eq('enrollment_id', enrollment.id)
+          .eq('status', 'passed');
+        if (attempts) passedTicketIds = new Set(attempts.map(a => a.ticket_id));
+      }
+
+      const sprintOrder = new Map(sprints.map((s, i) => [s.id, i]));
+      const ticketsBySprint = new Map<string, typeof tickets>();
+      for (const t of tickets) {
+        const list = ticketsBySprint.get(t.sprint_id) ?? [];
+        list.push(t);
+        ticketsBySprint.set(t.sprint_id, list);
+      }
+      for (const list of ticketsBySprint.values()) {
+        list.sort((a, b) => a.order_index - b.order_index);
+      }
+
+      const deriveStatus = (ticketId: string, sprintId: string, indexInSprint: number): "Completed" | "Active" | "Locked" => {
+        if (passedTicketIds.has(ticketId)) return "Completed";
+        const list = ticketsBySprint.get(sprintId) ?? [];
+        const prevTicket = list[indexInSprint - 1];
+        const prevCompleted = prevTicket ? passedTicketIds.has(prevTicket.id) : false;
+        const isFirstInCourse = sprintId === sprints[0]?.id && indexInSprint === 0;
+        if (isFirstInCourse || prevCompleted) return "Active";
+        return "Locked";
+      };
+
+      const domainSprints: DomainSprint[] = sprints.map(s => {
+        const list = ticketsBySprint.get(s.id) ?? [];
+        const domainTickets: DomainTicket[] = list.map((t, i) => ({
+          id: t.id,
+          title: t.title,
+          type: t.type as DomainTicket['type'],
+          durationEstimate: `${t.duration_estimate_minutes} mins`,
+          status: deriveStatus(t.id, s.id, i),
+          isUrgent: t.is_urgent,
+        }));
+        return {
+          id: s.id,
+          title: s.title,
+          order: s.order_index,
+          tickets: domainTickets,
+        };
+      });
+
+      return {
+        id: c.id,
+        title: c.title,
+        instructor: getInstructorName(c),
+        category: c.category as DomainCourse['category'],
+        difficulty: c.difficulty as DomainCourse['difficulty'],
+        totalSprints: c.total_sprints,
+        totalTickets: c.total_tickets,
+        fee: Number(c.fee_amount),
+        progressPercent: enrollment ? Number(enrollment.progress_percent) : 0,
+        sprints: domainSprints,
+        isEnrolled: !!enrollment,
+      };
+    },
   });
+}
+
+function isUuid(s: string): boolean {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(s);
 }
 
 export function useTicket(
@@ -103,20 +269,58 @@ export function useTicket(
   return useQuery({
     queryKey: ['courses', courseId, 'tickets', ticketId],
     enabled: options?.enabled !== false && !!courseId && !!ticketId,
-    queryFn: async () => {
+    queryFn: async (): Promise<Ticket> => {
+      if (isUuid(ticketId) && isUuid(courseId)) {
+        const { data: ticketRow, error: ticketError } = await supabase
+          .from('tickets')
+          .select('id, title, type, duration_estimate_minutes, is_urgent')
+          .eq('id', ticketId)
+          .eq('course_id', courseId)
+          .single();
+
+        if (!ticketError && ticketRow) {
+          const { data: scenarioRow } = await supabase
+            .from('ticket_scenarios')
+            .select('scenario_text, expected_outcome')
+            .eq('ticket_id', ticketId)
+            .maybeSingle();
+
+          const { data: deliverableRows } = await supabase
+            .from('ticket_deliverables')
+            .select('description')
+            .eq('ticket_id', ticketId)
+            .order('order_index', { ascending: true });
+
+          const scenario = scenarioRow as { scenario_text: string; expected_outcome: string | null } | null;
+          const deliverables = (deliverableRows ?? []).map((d: { description: string }) => d.description);
+
+          return {
+            id: ticketRow.id,
+            title: ticketRow.title,
+            type: ticketRow.type as Ticket['type'],
+            durationEstimate: `${ticketRow.duration_estimate_minutes} mins`,
+            status: 'Active',
+            isUrgent: ticketRow.is_urgent,
+            scenario: scenario?.scenario_text ?? undefined,
+            deliverables: deliverables.length > 0 ? deliverables : undefined,
+            expectedOutput: scenario?.expected_outcome ?? undefined,
+          };
+        }
+      }
+
       await delay(300);
       const course = mockCourses.find(c => c.id === courseId);
       if (!course) throw new Error("Course not found");
-      
+
       let foundTicket: Ticket | undefined;
       for (const sprint of course.sprints) {
         const t = sprint.tickets.find(t => t.id === ticketId);
         if (t) foundTicket = t;
       }
-      
+
       if (!foundTicket) throw new Error("Ticket not found");
       return foundTicket;
-    }
+    },
   });
 }
 
