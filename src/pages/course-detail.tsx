@@ -1,3 +1,4 @@
+import { useEffect, useState } from "react";
 import { useRoute, Link } from "wouter";
 import { motion } from "framer-motion";
 import { CheckCircle2, Lock, PlayCircle, Clock, Check, FileText, ArrowLeft } from "lucide-react";
@@ -17,6 +18,14 @@ import {
 export default function CourseDetail() {
   const [, params] = useRoute("/courses/:id");
   const { data: course, isLoading } = useCourse(params?.id || "");
+  const [openSprints, setOpenSprints] = useState<string[]>([]);
+
+  useEffect(() => {
+    if (!course) return;
+    if (openSprints.length === 0) {
+      setOpenSprints(course.sprints.map((s) => s.id));
+    }
+  }, [course, openSprints.length]);
 
   if (isLoading || !course) {
     return (
@@ -101,7 +110,12 @@ export default function CourseDetail() {
         <div className="mt-12">
           <h2 className="text-3xl font-display font-bold text-foreground mb-8">Work Sprints</h2>
           
-          <Accordion type="multiple" defaultValue={["s_1_2", "s_2_1"]} className="space-y-6">
+          <Accordion
+            type="multiple"
+            className="space-y-6"
+            value={openSprints}
+            onValueChange={(value) => setOpenSprints(value as string[])}
+          >
             {course.sprints.map((sprint) => {
               const sprintCompleted = sprint.tickets.every(t => t.status === "Completed");
               const isLocked = sprint.tickets.every(t => t.status === "Locked");
