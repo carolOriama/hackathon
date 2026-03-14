@@ -459,6 +459,45 @@ export function useSubmitTicket() {
   });
 }
 
+export function useEnrollInCourse() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async (courseId: string) => {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session?.user?.id) throw new Error("You must be signed in to enroll");
+
+      const { data: existing } = await supabase
+        .from('enrollments')
+        .select('id')
+        .eq('student_id', session.user.id)
+        .eq('course_id', courseId)
+        .maybeSingle();
+
+      if (existing) return { enrollmentId: existing.id };
+
+      const { data: enrollment, error } = await supabase
+        .from('enrollments')
+        .insert({
+          student_id: session.user.id,
+          course_id: courseId,
+          status: 'active',
+        })
+        .select('id')
+        .single();
+
+      if (error) throw new Error(error.message ?? "Enrollment failed");
+      return { enrollmentId: enrollment.id };
+    },
+    onSuccess: (_, courseId) => {
+      queryClient.invalidateQueries({ queryKey: ['courses'] });
+      queryClient.invalidateQueries({ queryKey: ['courses', 'enrolled'] });
+      queryClient.invalidateQueries({ queryKey: ['courses', courseId] });
+      queryClient.invalidateQueries({ queryKey: ['user'] });
+    },
+  });
+}
+
 // --- Instructor stubs (no backend yet) ---
 
 export type CreateCoursePayload = {

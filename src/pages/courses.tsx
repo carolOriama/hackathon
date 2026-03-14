@@ -1,9 +1,10 @@
 import { useState } from "react";
-import { Link } from "wouter";
+import { Link, useLocation } from "wouter";
 import { motion } from "framer-motion";
+import { useToast } from "@/hooks/use-toast";
 import { Search, Filter, Briefcase, Layers, ArrowRight } from "lucide-react";
 import { MainLayout } from "@/components/layout/main-layout";
-import { useCourses } from "@/hooks/use-app-data";
+import { useCourses, useEnrollInCourse } from "@/hooks/use-app-data";
 import { Card, CardContent, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -13,8 +14,23 @@ import { Skeleton } from "@/components/ui/skeleton";
 
 export default function Courses() {
   const { data: courses, isLoading } = useCourses();
+  const enrollMutation = useEnrollInCourse();
+  const { toast } = useToast();
+  const [, setLocation] = useLocation();
   const [filter, setFilter] = useState("All");
   const [search, setSearch] = useState("");
+
+  const handleEnroll = (courseId: string) => {
+    enrollMutation.mutate(courseId, {
+      onSuccess: () => {
+        toast({ title: "Enrolled!", description: "You can now access the course." });
+        setLocation(`/courses/${courseId}`);
+      },
+      onError: (err) => {
+        toast({ title: "Enrollment failed", description: err instanceof Error ? err.message : "Please try again.", variant: "destructive" });
+      },
+    });
+  };
 
   const filteredCourses = courses?.filter(c => {
     if (filter !== "All" && c.category !== filter) return false;
@@ -119,8 +135,14 @@ export default function Courses() {
                         <Link href={`/courses/${course.id}`}>Continue</Link>
                       </Button>
                     ) : (
-                      <Button size="default" variant="outline" className="w-full sm:w-auto font-bold bg-secondary text-foreground hover:bg-background border-2 border-border rounded-none px-6 shadow-[2px_2px_0px_0px_rgba(0,0,0,0.5)] hover:shadow-none hover:translate-x-0.5 hover:translate-y-0.5 transition-all">
-                        Enroll Now
+                      <Button
+                        size="default"
+                        variant="outline"
+                        className="w-full sm:w-auto font-bold bg-secondary text-foreground hover:bg-background border-2 border-border rounded-none px-6 shadow-[2px_2px_0px_0px_rgba(0,0,0,0.5)] hover:shadow-none hover:translate-x-0.5 hover:translate-y-0.5 transition-all"
+                        onClick={() => handleEnroll(course.id)}
+                        disabled={enrollMutation.isPending}
+                      >
+                        {enrollMutation.isPending ? "Enrolling…" : "Enroll Now"}
                       </Button>
                     )}
                   </CardFooter>
