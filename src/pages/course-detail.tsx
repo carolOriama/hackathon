@@ -62,16 +62,19 @@ export default function CourseDetail() {
     );
   }
 
-  // Calculate ticket counts for progress display
+  // Calculate ticket counts for progress display (completed = attempted at least once)
   let completedTickets = 0;
   let totalTickets = 0;
-  
   course.sprints.forEach(s => {
     s.tickets.forEach(t => {
       totalTickets++;
       if (t.status === "Completed") completedTickets++;
     });
   });
+  const progressPercent =
+    totalTickets > 0
+      ? Math.round((completedTickets / totalTickets) * 100)
+      : (course.progressPercent ?? 0);
 
   return (
     <MainLayout>
@@ -104,9 +107,9 @@ export default function CourseDetail() {
           <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm flex flex-col justify-center">
             <div className="flex justify-between items-end mb-3">
               <span className="text-sm font-bold text-slate-500 uppercase tracking-wider">Course Progress</span>
-              <span className="text-2xl font-bold text-primary">{course.progressPercent}%</span>
+              <span className="text-2xl font-bold text-primary">{progressPercent}%</span>
             </div>
-            <Progress value={course.progressPercent} className="h-3" />
+            <Progress value={progressPercent} className="h-3" />
             <p className="text-sm text-slate-500 mt-3 font-medium">
               {completedTickets} of {totalTickets} Tickets Completed
             </p>
@@ -115,9 +118,9 @@ export default function CourseDetail() {
           <div className="bg-emerald-50 p-6 rounded-2xl border border-emerald-100 flex flex-col justify-center">
             <div className="flex justify-between items-end mb-3">
               <span className="text-sm font-bold text-emerald-700 uppercase tracking-wider">Fee Refunded</span>
-              <span className="text-2xl font-bold text-emerald-600">KES {(course.fee * ((course.progressPercent || 0)/100)).toFixed(0)}</span>
+              <span className="text-2xl font-bold text-emerald-600">KES {(course.fee * (progressPercent / 100)).toFixed(0)}</span>
             </div>
-            <Progress value={course.progressPercent} className="h-3 bg-emerald-200/50 [&>div]:bg-emerald-500" />
+            <Progress value={progressPercent} className="h-3 bg-emerald-200/50 [&>div]:bg-emerald-500" />
             <p className="text-sm text-emerald-600/80 mt-3 font-medium">
               Total Fee: KES {course.fee}
             </p>

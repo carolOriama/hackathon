@@ -130,14 +130,24 @@ export default function Profile() {
           </Card>
         </motion.div>
 
-        {/* Certificates & Proof of Work */}
+        {/* Certificates & Proof of Work — only completed sprints and courses */}
         <motion.div
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ delay: 0.2 }}
         >
-          <h2 className="text-2xl font-display font-bold text-slate-900 mb-6">Proof of Work</h2>
+          <h2 className="text-2xl font-display font-bold text-slate-900 mb-2">Proof of Work</h2>
+          <p className="text-sm text-slate-500 mb-6">Completed courses and sprints</p>
           
+          {user.certificates.length === 0 ? (
+            <Card className="border border-slate-200 shadow-sm">
+              <CardContent className="p-8 text-center">
+                <Medal className="w-12 h-12 text-slate-300 mx-auto mb-3" />
+                <p className="text-slate-600 font-medium">No completed courses yet</p>
+                <p className="text-sm text-slate-500 mt-1">Finish a course to see it here as proof of work.</p>
+              </CardContent>
+            </Card>
+          ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             {user.certificates.map(cert => (
               <Card key={cert.id} className="border border-slate-200 shadow-sm overflow-hidden flex flex-col h-full hover:shadow-md transition-all">
@@ -165,6 +175,7 @@ export default function Profile() {
               </Card>
             ))}
           </div>
+          )}
         </motion.div>
 
         {/* LinkedIn Share Modal */}

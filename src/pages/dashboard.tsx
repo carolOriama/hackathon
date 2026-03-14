@@ -2,7 +2,7 @@ import { Link } from "wouter";
 import { motion } from "framer-motion";
 import { Flame, BookOpen, CheckCircle2, Wallet, AlertCircle, Clock, ArrowRight } from "lucide-react";
 import { MainLayout } from "@/components/layout/main-layout";
-import { useUser, useEnrolledCourses } from "@/hooks/use-app-data";
+import { useUser, useEnrolledCourses, useCourse } from "@/hooks/use-app-data";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
 import { Badge } from "@/components/ui/badge";
@@ -12,6 +12,16 @@ import { Skeleton } from "@/components/ui/skeleton";
 export default function Dashboard() {
   const { data: user, isLoading: userLoading } = useUser();
   const { data: courses, isLoading: coursesLoading } = useEnrolledCourses();
+  const firstCourseId = courses?.[0]?.id;
+  const { data: firstCourse } = useCourse(firstCourseId ?? "");
+  const upNext = (() => {
+    if (!firstCourse?.sprints?.length) return null;
+    for (let i = 0; i < firstCourse.sprints.length; i++) {
+      const ticket = firstCourse.sprints[i].tickets.find((t) => t.status === "Active");
+      if (ticket) return { course: firstCourse, ticket, sprintNumber: i + 1 };
+    }
+    return null;
+  })();
 
   const containerVariants: any = {
     hidden: { opacity: 0 },
@@ -41,9 +51,6 @@ export default function Dashboard() {
       </MainLayout>
     );
   }
-
-  const activeTicketCourse = courses?.[0];
-  const activeTicket = activeTicketCourse?.sprints[1]?.tickets.find(t => t.status === "Active");
 
   return (
     <MainLayout>
@@ -147,35 +154,57 @@ export default function Dashboard() {
           >
             <h2 className="text-xl font-display font-bold text-slate-900">Up Next</h2>
             
-            {activeTicket && activeTicketCourse && (
+            {upNext ? (
               <Card className="border border-slate-200 shadow-md overflow-hidden hover:shadow-lg transition-shadow">
                 <div className="h-2 bg-gradient-to-r from-primary to-blue-500" />
                 <CardHeader className="pb-3">
-                  <div className="flex justify-between items-start mb-2">
-                    <Badge variant="secondary" className="bg-red-50 text-red-600 border-red-100 font-medium">
-                      <AlertCircle className="w-3 h-3 mr-1" /> Urgent Priority
-                    </Badge>
+                  <div className="flex flex-wrap gap-2 justify-between items-start mb-2">
+                    {upNext.ticket.isUrgent && (
+                      <Badge variant="secondary" className="bg-red-50 text-red-600 border-red-100 font-medium">
+                        <AlertCircle className="w-3 h-3 mr-1" /> Urgent Priority
+                      </Badge>
+                    )}
                     <div className="flex items-center text-sm text-slate-500 font-medium bg-slate-100 px-2.5 py-1 rounded-md">
                       <Clock className="w-4 h-4 mr-1.5" />
-                      Est. {activeTicket.durationEstimate}
+                      Est. {upNext.ticket.durationEstimate}
                     </div>
                   </div>
-                  <CardTitle className="text-2xl leading-tight">{activeTicket.title}</CardTitle>
-                  <p className="text-slate-500 text-sm">{activeTicketCourse.title} • Sprint 2</p>
+                  <CardTitle className="text-2xl leading-tight">{upNext.ticket.title}</CardTitle>
+                  <p className="text-slate-500 text-sm">{upNext.course.title} • Sprint {upNext.sprintNumber}</p>
                 </CardHeader>
                 <CardContent>
-                  <div className="bg-slate-50 p-4 rounded-xl border border-slate-100 mb-6">
-                    <p className="text-slate-700 leading-relaxed">
-                      {activeTicket.scenario}
-                    </p>
-                  </div>
+                  {upNext.ticket.scenario && (
+                    <div className="bg-slate-50 p-4 rounded-xl border border-slate-100 mb-6">
+                      <p className="text-slate-700 leading-relaxed">
+                        {upNext.ticket.scenario}
+                      </p>
+                    </div>
+                  )}
                   <div className="flex justify-end">
                     <Button asChild size="lg" className="w-full sm:w-auto shadow-md shadow-primary/20">
-                      <Link href={`/courses/${activeTicketCourse.id}/ticket/${activeTicket.id}`}>
+                      <Link href={`/courses/${upNext.course.id}/ticket/${upNext.ticket.id}`}>
                         Start Ticket <ArrowRight className="ml-2 w-4 h-4" />
                       </Link>
                     </Button>
                   </div>
+                </CardContent>
+              </Card>
+            ) : courses?.length ? (
+              <Card className="border border-slate-200 shadow-sm">
+                <CardContent className="p-6 text-center">
+                  <p className="text-slate-500 mb-4">You’re all caught up in this course. Pick another to continue.</p>
+                  <Button variant="outline" asChild>
+                    <Link href="/courses">Browse courses</Link>
+                  </Button>
+                </CardContent>
+              </Card>
+            ) : (
+              <Card className="border border-slate-200 shadow-sm">
+                <CardContent className="p-6 text-center">
+                  <p className="text-slate-500 mb-4">Enroll in a course to see your next ticket here.</p>
+                  <Button asChild>
+                    <Link href="/courses">Find courses</Link>
+                  </Button>
                 </CardContent>
               </Card>
             )}
@@ -194,33 +223,44 @@ export default function Dashboard() {
             </div>
             
             <div className="space-y-4">
-              {courses?.map((course) => (
-                <Card key={course.id} className="border-0 shadow-sm hover-elevate transition-all">
-                  <CardContent className="p-5">
-                    <div className="flex justify-between items-start mb-3">
-                      <Badge variant="outline" className="bg-slate-50 text-slate-600">
-                        {course.category}
-                      </Badge>
-                      <span className="text-xs font-bold text-slate-900 bg-slate-100 px-2 py-0.5 rounded">
-                        Sprint {course.currentSprint}
-                      </span>
-                    </div>
-                    <h3 className="font-bold text-slate-900 leading-tight mb-4">{course.title}</h3>
-                    
-                    <div className="space-y-1.5 mb-4">
-                      <div className="flex justify-between text-xs font-medium">
-                        <span className="text-slate-500">Progress</span>
-                        <span className="text-primary">{course.progressPercent}%</span>
+              {courses?.length ? (
+                courses.map((course) => (
+                  <Card key={course.id} className="border-0 shadow-sm hover-elevate transition-all">
+                    <CardContent className="p-5">
+                      <div className="flex justify-between items-start mb-3">
+                        <Badge variant="outline" className="bg-slate-50 text-slate-600">
+                          {course.category}
+                        </Badge>
+                        <span className="text-xs font-bold text-slate-900 bg-slate-100 px-2 py-0.5 rounded">
+                          Sprint {course.currentSprint ?? 1}
+                        </span>
                       </div>
-                      <Progress value={course.progressPercent} className="h-1.5" />
-                    </div>
-                    
-                    <Button variant="outline" className="w-full text-sm font-medium h-9" asChild>
-                      <Link href={`/courses/${course.id}`}>Continue</Link>
+                      <h3 className="font-bold text-slate-900 leading-tight mb-4">{course.title}</h3>
+                      
+                      <div className="space-y-1.5 mb-4">
+                        <div className="flex justify-between text-xs font-medium">
+                          <span className="text-slate-500">Progress</span>
+                          <span className="text-primary">{course.progressPercent ?? 0}%</span>
+                        </div>
+                        <Progress value={course.progressPercent ?? 0} className="h-1.5" />
+                      </div>
+                      
+                      <Button variant="outline" className="w-full text-sm font-medium h-9" asChild>
+                        <Link href={`/courses/${course.id}`}>Continue</Link>
+                      </Button>
+                    </CardContent>
+                  </Card>
+                ))
+              ) : (
+                <Card className="border-0 shadow-sm">
+                  <CardContent className="p-6 text-center">
+                    <p className="text-slate-500 text-sm mb-3">No active courses yet.</p>
+                    <Button variant="outline" size="sm" asChild>
+                      <Link href="/courses">Browse courses</Link>
                     </Button>
                   </CardContent>
                 </Card>
-              ))}
+              )}
             </div>
           </motion.div>
 

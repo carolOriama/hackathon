@@ -10,6 +10,7 @@ import {
   XCircle,
   Sparkles,
 } from "lucide-react";
+import { useQueryClient } from "@tanstack/react-query";
 import {
   useTicket,
   useCourse,
@@ -40,6 +41,7 @@ export default function TicketView() {
   const courseId = params?.courseId || "";
   const ticketId = params?.ticketId || "";
 
+  const queryClient = useQueryClient();
   const { data: course, isLoading: courseLoading, isError: courseError } = useCourse(courseId);
   const { data: ticket, isLoading: ticketLoading, isError: ticketError } = useTicket(
     courseId,
@@ -101,6 +103,7 @@ export default function TicketView() {
     try {
       await gradeMutation.mutateAsync();
       await refetchAttempt();
+      queryClient.invalidateQueries({ queryKey: ["courses", courseId] });
     } catch {
       // Grading failed; user can use "Grade with AI" manually
     } finally {
@@ -114,6 +117,7 @@ export default function TicketView() {
     try {
       await gradeMutation.mutateAsync();
       await refetchAttempt();
+      queryClient.invalidateQueries({ queryKey: ["courses", courseId] });
     } catch {
       // Error already handled by mutation
     }
