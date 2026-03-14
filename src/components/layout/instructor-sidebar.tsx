@@ -1,4 +1,5 @@
 import { Link, useLocation } from "wouter";
+import { useAuth } from "@/hooks/use-auth";
 import {
   LayoutDashboard,
   BookOpen,
@@ -30,7 +31,13 @@ const navItems = [
 ];
 
 export function InstructorSidebar() {
-  const [location] = useLocation();
+  const [location, setLocation] = useLocation();
+  const { signOut, user } = useAuth();
+
+  const handleSignOut = async () => {
+    await signOut();
+    setLocation("/login");
+  };
 
   return (
     <Sidebar className="border-r border-slate-200">
@@ -75,16 +82,14 @@ export function InstructorSidebar() {
 
       <SidebarFooter className="p-4 space-y-3">
         <div className="px-2 py-3 rounded-lg bg-emerald-50 border border-emerald-100">
-          <p className="text-xs font-semibold text-emerald-800">David Chen</p>
+          <p className="text-xs font-semibold text-emerald-800">{user?.user_metadata?.full_name || 'Instructor'}</p>
           <p className="text-[11px] text-emerald-500 mt-0.5">Senior Cloud Architect</p>
         </div>
         <SidebarMenu>
           <SidebarMenuItem>
-            <SidebarMenuButton asChild className="text-slate-500 hover:text-destructive">
-              <Link href="/login">
-                <LogOut className="w-5 h-5" />
-                <span>Sign Out</span>
-              </Link>
+            <SidebarMenuButton onClick={handleSignOut} className="text-slate-500 hover:text-destructive cursor-pointer">
+              <LogOut className="w-5 h-5" />
+              <span>Sign Out</span>
             </SidebarMenuButton>
           </SidebarMenuItem>
         </SidebarMenu>
