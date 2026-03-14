@@ -44,7 +44,7 @@ export default function Dashboard() {
   }
 
   const activeTicketCourse = courses?.[0];
-  const activeTicket = activeTicketCourse?.sprints[1]?.tickets.find(t => t.status === "Active") || activeTicketCourse?.sprints[0]?.tickets[0];
+  const activeTicket = activeTicketCourse?.sprints?.[1]?.tickets?.find((t: any) => t.status === "Active") || activeTicketCourse?.sprints?.[0]?.tickets?.[0];
 
   return (
     <MainLayout>
